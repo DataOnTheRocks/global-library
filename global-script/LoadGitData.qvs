@@ -1,6 +1,7 @@
 SUB LoadGitData (vRepoURL)
 
-// Example: CALL LoadGitData ('https://github.com/qlik-blog/data-models/tree/master/bike-sales')
+// Include: 	$(Must_Include=https://raw.githubusercontent.com/qlik-blog/global-library/master/global-script/LoadGitData.qvs)
+// Example: 	CALL LoadGitData ('https://github.com/qlik-blog/data-models/tree/master/bike-sales')
 
 // ######################################################################################################################################
 // URL for Loading data from Git
