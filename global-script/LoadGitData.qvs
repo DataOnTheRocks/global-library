@@ -1,0 +1,46 @@
+SUB LoadGitData (vRepoURL)
+
+// Example: CALL LoadGitData ('https://github.com/qlik-blog/data-models/tree/master/bike-sales')
+
+// ######################################################################################################################################
+// URL for Loading data from Git
+// ######################################################################################################################################
+
+LET vGitRepo = '$(vRepoURL)';
+LET vGitRaw = replace('$(vGitRepo)', 'tree', 'blob');
+
+// ######################################################################################################################################
+// Get the list of QVD files from the repo
+// ######################################################################################################################################
+
+GitFiles:
+LOAD
+    @2 as Files,
+    '$(vGitRaw)/' & replace(@2, ' ', '%20') & '?raw=true' as FileURL
+    
+FROM [$(vGitRepo)]
+(html, utf8, no labels, table is @1)
+Where 1=1
+and WildMatch(@2, '*.qvd')
+;
+
+// ######################################################################################################################################
+// Loop thru the QVD files and load them
+// ######################################################################################################################################
+
+FOR i = 0 to NoOfRows('GitFiles')-1;
+
+LET vFile = peek('FileURL', $(i), 'GitFiles');
+LET vTable = replace(TextBetween(peek('FileURL', $(i), 'GitFiles'), '$(vGitRaw)/', '.qvd'), '%20', ' ');
+
+TRACE ################################################;
+TRACE Loading Table: $(vTable);
+TRACE ################################################;
+
+'$(vTable)':
+LOAD * FROM [$(vFile)] (qvd);
+
+NEXT;
+
+
+END SUB;
