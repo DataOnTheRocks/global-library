@@ -1,0 +1,184 @@
+/*
+vSymbol             = Symbolcode to get candle data from Binance API
+vTimeFrame          = Timeframe for symbol: 15m / 1h / 4h / 8h / 1D / 3D / 1W
+vLimit              = Nr of candles to get
+vMaxMA              = Highest Moving Average that is calculated on the measures table (normal = 200 MA)
+vConcatTableName    = Name of the table in which the data is stored
+vQualify            = 1 or 0 for Qualifying the table name
+vJSONConnection     = Name of Generic Connection string for which the 'WITH CONNECTION(Url' can be used
+*/
+
+SUB GetCandles (vSymbol, vTimeFrame, vLimit, vMaxMA, vConcatTableName, vQualify, vJSONConnection)
+
+LIB CONNECT TO '$(vJSONConnection)';
+
+LET vRecordsToGet = vLimit + vMaxMA + 13;
+
+SET ThousandSep=',';
+SET DecimalSep='.';
+
+$(vConcatTableName):
+LOAD distinct
+    ReloadTime() as Reloaded
+    
+AutoGenerate (1);
+
+// ##########################################################################################
+/*
+[
+  [
+    1499040000000,      // 1 = Open time
+    "0.01634790",       // 2 = Open
+    "0.80000000",       // 3 = High
+    "0.01575800",       // 4 = Low
+    "0.01577100",       // 5 = Close
+    "148976.11427815",  // 6 = Volume
+    1499644799999,      // 7 = Close time
+    "2434.19055334",    // 8 = Quote asset volume
+    308,                // 9 = Number of trades
+    "1756.87402397",    // 10 = Taker buy base asset volume
+    "28.46694368",      // 11 = Taker buy quote asset volume
+    "17928899.62484339" // 12 = Ignore.
+  ]
+]
+*/
+// ##########################################################################################
+
+FieldMapping:
+Mapping 
+LOAD * INLINE [
+RowID, FieldName
+1, OpenTime
+2, Open
+3, High
+4, Low
+5, Close
+6, Volume
+7, CloseTime
+8, QuoteAssetVolume
+9, NumberOfTrades
+10, Taker buy base asset volume
+11, Taker buy quote asset volume
+12, Ignore
+];
+
+
+FetchCandles:
+SQL SELECT 
+    "__KEY_root",
+    (SELECT 
+        "@Value",
+        "__FK_root"
+    FROM "root" FK "__FK_root" ArrayValueAlias "@Value")
+FROM JSON (wrap on) "root" PK "__KEY_root"
+WITH CONNECTION(Url "https://api.binance.com/api/v1/klines?interval=$(vTimeFrame)&limit=$(vRecordsToGet)&symbol=$(vSymbol)")
+;
+
+Fields:
+LOAD
+    '$(vTimeFrame)' as @timeframe,
+    '$(vSymbol)' as @symbol,
+    if(rangesum(peek([FieldID]), 1) > 12, 1, rangesum(peek([FieldID]), 1)) as [FieldID],
+    [@Value] AS [@value],
+    [__FK_root] AS RecId //[__KEY_root]
+    
+RESIDENT FetchCandles
+WHERE NOT IsNull([__FK_root]);
+
+
+FieldTable:
+NoConcatenate
+LOAD DISTINCT
+    AutoNumber(RowNo(), @symbol) as @symbolRows,
+    ApplyMap('FieldMapping', FieldID) as @fieldName,
+    *
+Resident Fields
+;
+
+AddFieldsToTable:
+LOAD
+    null() as Dummy
+AutoGenerate (1);
+
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    'https://api.binance.com/api/v1/klines?interval=$(vTimeFrame)&limit=$(vLimit)&symbol=$(vSymbol)' as FetchURL,
+    @timeframe as TimeFrame,
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    date(floor(Timestamp((@value/1000)/86400+25569))) as CloseDate
+Resident FieldTable Where FieldID = 7;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    //QuoteDate as Date,
+    @symbol as GetSymbol, 
+    RecId,
+    //date((@value/1000)/86400+25569) as Date,
+    Timestamp( (@value/1000) / 86400 + 25569 + (1/24)) as OpenTime 
+Resident FieldTable Where FieldID = 1;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    Timestamp(( (@value/1000) / 86400 + 25569 ) + (1/24)) &'::'& @symbol as TimePairKey,
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    Timestamp( (@value/1000) / 86400 + 25569 + (1/24)) as CloseTime
+Resident FieldTable Where FieldID = 7;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    @value as Open
+Resident FieldTable Where FieldID = 2;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    @value as Close
+Resident FieldTable Where FieldID = 5;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    @value as High
+Resident FieldTable Where FieldID = 3;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol, 
+    RecId,
+    //QuoteDate as Date,
+    @value as Low
+Resident FieldTable Where FieldID = 4;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol,
+    RecId,
+    //QuoteDate as Date,
+    @value as Volume
+Resident FieldTable Where FieldID = 6;
+
+LEFT JOIN (AddFieldsToTable)
+LOAD
+    @symbol as GetSymbol,
+    RecId,
+    //QuoteDate as Date,
+    @value as NrOfTrades
+Resident FieldTable Where FieldID = 9;
+
+
+DROP TABLES FetchCandles, Fields, FieldTable;
+DROP Fields Dummy;
+
+END SUB
